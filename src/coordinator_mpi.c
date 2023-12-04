@@ -20,12 +20,14 @@ int main(int argc, char *argv[]) {
   MPI_Init(&argc, &argv);
   MPI_Comm_size(MPI_COMM_WORLD, &totalProcs);
   MPI_Comm_rank(MPI_COMM_WORLD, &procID);
-
+  int numTasks;
+  task_t **tasks;
+  if(read_tasks(argv[1], &numTasks, &tasks)) return -1;
 
 
 
   if (procID == 0) {
-      int numTasks = atoi(argv[1]);
+      
       int nextTask = 0;
       MPI_Status status;
       int32_t message;
@@ -53,16 +55,19 @@ int main(int argc, char *argv[]) {
           while (true) {
               
               MPI_Status status;
-              MPI_Send(&ready, 1, MPI_INT32_T, 0, 0, MPI_COMM_WORLD);
+              MPI_Send(&message, 1, MPI_INT32_T, 0, 0, MPI_COMM_WORLD);
               MPI_Recv(&message, 1, MPI_INT32_T, 0, MPI_ANY_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
               if (message == TERMINATE) {
                   break;
+              } else {
+                  if (execute_task(tasks[message])) {
+                      return -1;
+                  }
+                  free(tasks[message]->path);
               }
-              int result = execute_task(&task);
-              int task_completed = TASK_COMPLETED;
-              MPI_Send(&result, 1, MPI_INT32_T, 0, TASK_COMPLETED, MPI_COMM_WORLD);
           }
   }
+  free(tasks);
   MPI_Finalize();
   return 0;
 
