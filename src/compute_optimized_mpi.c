@@ -24,7 +24,22 @@ void flip_matrix(matrix_t* b_matrix, matrix_t* flipped_b) {
         }
     }
 }
-
+void process_block(matrix_t *a_matrix, matrix_t *flipped_b, int *output_data, int start_row, int start_col, int end_row, int end_col, int output_cols) {
+    for (int i = start_row; i < end_row; ++i) {
+        for (int j = start_col; j < end_col; ++j) {
+            int sum = 0;
+            for (int k = 0; k < flipped_b->rows; ++k) {
+                for (int l = 0; l < flipped_b->cols; ++l) {
+                    // Ensure bounds are not exceeded
+                    if ((i + k) < a_matrix->rows && (j + l) < a_matrix->cols) {
+                        sum += a_matrix->data[(i + k) * a_matrix->cols + (j + l)] * flipped_b->data[k * flipped_b->cols + l];
+                    }
+                }
+            }
+            output_data[i * output_cols + j] = sum;
+        }
+    }
+}
 // Computes the convolution of two matrices
 int convolve(matrix_t *a_matrix, matrix_t *b_matrix, matrix_t **output_matrix) {
   // TODO: convolve matrix a and matrix b, and store the resulting matrix in
@@ -40,39 +55,13 @@ int convolve(matrix_t *a_matrix, matrix_t *b_matrix, matrix_t **output_matrix) {
       free(flipped_b);
       return -1;
   }
-  int a_cols = a_matrix->cols, b_cols = b_matrix->cols;
-  int *a_data = a_matrix->data, *flipped_data = flipped_b->data;
-  int *output_data = (*output_matrix)->data;
-
+  int block_size = 8;
     #pragma omp parallel for collapse(2)
-    for (int i = 0; i < output_rows; ++i) {
-        for (int j = 0; j < output_cols; ++j) {
-            int sum = 0;
-            if (b_cols >= 8) {
-                for (int k = 0; k < b_matrix->rows; ++k) {
-                    int l;
-                    for (l = 0; l <= b_cols - 8; l += 8) {
-                        __m256i a_vec = _mm256_loadu_si256((__m256i*)&a_data[(i + k) * a_cols + (j + l)]);
-                        __m256i b_vec = _mm256_loadu_si256((__m256i*)&flipped_data[k * b_cols + l]);
-                        __m256i product = _mm256_mullo_epi32(a_vec, b_vec);
-                        __m256i temp1 = _mm256_hadd_epi32(product, product);
-                        __m256i temp2 = _mm256_hadd_epi32(temp1, temp1);
-                        int buffer[8];
-                        _mm256_storeu_si256((__m256i*)buffer, temp2);
-                        sum += buffer[0] + buffer[4];
-                    }
-                    for (; l < b_cols; ++l) {
-                        sum += a_data[(i + k) * a_cols + (j + l)] * flipped_data[k * b_cols + l];
-                    }
-                }
-            } else {
-                for (int k = 0; k < b_matrix->rows; ++k) {
-                    for (int l = 0; l < b_cols; ++l) {
-                        sum += a_data[(i + k) * a_cols + (j + l)] * flipped_data[k * b_cols + l];
-                    }
-                }
-            }
-            output_data[i * output_cols + j] = sum;
+    for (int i = 0; i < output_rows; i += block_size) {
+        for (int j = 0; j < output_cols; j += block_size) {
+            int current_end_row = (i + block_size > output_rows) ? output_rows : (i + block_size);
+            int current_end_col = (j + block_size > output_cols) ? output_cols : (j + block_size);
+            process_block(a_matrix, flipped_b, (*output_matrix)->data, i, j, current_end_row, current_end_col, output_cols);
         }
     }
   free(flipped_b->data);
