@@ -27,6 +27,29 @@ void flip_matrix(matrix_t* b_matrix, matrix_t* flipped_b) {
     }
 }
 
+int dot_avx2(int32_t* vec1, int32_t* vec2, int n) {
+    __m256i sum = _mm256_setzero_si256();
+
+    for (int i = 0; i <= n - 8; i += 8) {
+        __m256i a_vec = _mm256_loadu_si256((__m256i*)&vec1[i]);
+        __m256i b_vec = _mm256_loadu_si256((__m256i*)&vec2[i]);
+        __m256i prod = _mm256_mullo_epi32(a_vec, b_vec);
+        sum = _mm256_add_epi32(sum, prod);
+    }
+
+    int buffer[8];
+    _mm256_storeu_si256((__m256i*)buffer, sum);
+    int total = buffer[0] + buffer[1] + buffer[2] + buffer[3] + buffer[4] + buffer[5] + buffer[6] + buffer[7];
+
+    // Handle the remaining elements
+    for (int i = n / 8 * 8; i < n; ++i) {
+        total += vec1[i] * vec2[i];
+    }
+
+    return total;
+}
+
+
 // Computes the convolution of two matrices
 int convolve(matrix_t *a_matrix, matrix_t *b_matrix, matrix_t **output_matrix) {
   // TODO: convolve matrix a and matrix b, and store the resulting matrix in
@@ -43,39 +66,41 @@ int convolve(matrix_t *a_matrix, matrix_t *b_matrix, matrix_t **output_matrix) {
       free(flipped_b);
       return -1;
   }
-  #pragma omp parallel for collapse(2)
-  for (int i = 0; i < output_rows; ++i) {
-      for (int j = 0; j < output_cols; ++j) {
-          int sum = 0;
-          if (b_matrix->cols >= 8) {
-              for (int k = 0; k < b_matrix->rows; ++k) {
-                  int l;
-                  for (l = 0; l <= b_matrix->cols - 8; l += 8) {
-                      __m256i a_vec = _mm256_loadu_si256((__m256i*)&a_matrix->data[(i + k) * a_matrix->cols + (j + l)]);
-                      __m256i b_vec = _mm256_loadu_si256((__m256i*)&flipped_b->data[k * b_matrix->cols + l]);
-                      __m256i product = _mm256_mullo_epi32(a_vec, b_vec);
-                      __m256i temp1 = _mm256_hadd_epi32(product, product);
-                      __m256i temp2 = _mm256_hadd_epi32(temp1, temp1);
-                      int buffer[8];
-                      _mm256_storeu_si256((__m256i*)buffer, temp2);
-                      sum += buffer[0] + buffer[4];
-                  }
-                  for (; l < b_matrix->cols; ++l) {
-                      sum += a_matrix->data[(i + k) * a_matrix->cols + (j + l)] * flipped_b->data[k * b_matrix->cols + l];
-                  }
-              }
-          } else {
-              for (int k = 0; k < b_matrix->rows; ++k) {
-                  for (int l = 0; l < b_matrix->cols; ++l) {
-                      sum += a_matrix->data[(i + k) * a_matrix->cols + (j + l)] * flipped_b->data[k * b_matrix->cols + l];
-                  }
-              }
-          }
-          (*output_matrix)->data[i * output_cols + j] = sum;
-      }
-  }
+  int a_cols = a_matrix->cols, b_cols = b_matrix->cols;
+  int *a_data = a_matrix->data, *flipped_data = flipped_b->data;
+  int *output_data = (*output_matrix)->data;
 
-
+    #pragma omp parallel for collapse(2)
+    for (int i = 0; i < output_rows; ++i) {
+        for (int j = 0; j < output_cols; ++j) {
+            int sum = 0;
+            if (b_cols >= 8) {
+                for (int k = 0; k < b_matrix->rows; ++k) {
+                    int l;
+                    for (l = 0; l <= b_cols - 8; l += 8) {
+                        __m256i a_vec = _mm256_loadu_si256((__m256i*)&a_data[(i + k) * a_cols + (j + l)]);
+                        __m256i b_vec = _mm256_loadu_si256((__m256i*)&flipped_data[k * b_cols + l]);
+                        __m256i product = _mm256_mullo_epi32(a_vec, b_vec);
+                        __m256i temp1 = _mm256_hadd_epi32(product, product);
+                        __m256i temp2 = _mm256_hadd_epi32(temp1, temp1);
+                        int buffer[8];
+                        _mm256_storeu_si256((__m256i*)buffer, temp2);
+                        sum += buffer[0] + buffer[4];
+                    }
+                    for (; l < b_cols; ++l) {
+                        sum += a_data[(i + k) * a_cols + (j + l)] * flipped_data[k * b_cols + l];
+                    }
+                }
+            } else {
+                for (int k = 0; k < b_matrix->rows; ++k) {
+                    for (int l = 0; l < b_cols; ++l) {
+                        sum += a_data[(i + k) * a_cols + (j + l)] * flipped_data[k * b_cols + l];
+                    }
+                }
+            }
+            output_data[i * output_cols + j] = sum;
+        }
+    }
   free(flipped_b->data);
   free(flipped_b);
   return 0;

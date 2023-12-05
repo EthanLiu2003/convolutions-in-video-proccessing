@@ -40,42 +40,41 @@ int convolve(matrix_t *a_matrix, matrix_t *b_matrix, matrix_t **output_matrix) {
       free(flipped_b);
       return -1;
   }
-  if (b_matrix->cols >= 8) {
-      for (int i = 0; i < output_rows; ++i) {
-          for (int j = 0; j < output_cols; ++j) {
-              int sum = 0;
-              for (int k = 0; k < b_matrix->rows; ++k) {
-                  int l;
-                  for (l = 0; l <= b_matrix->cols - 8; l += 8) {
-                      __m256i a_vec = _mm256_loadu_si256((__m256i*)&a_matrix->data[(i + k) * a_matrix->cols + (j + l)]);
-                      __m256i b_vec = _mm256_loadu_si256((__m256i*)&flipped_b->data[k * b_matrix->cols + l]);
-                      __m256i product = _mm256_mullo_epi32(a_vec, b_vec);
-                      __m256i temp1 = _mm256_hadd_epi32(product, product);
-                      __m256i temp2 = _mm256_hadd_epi32(temp1, temp1);
-                      int buffer[8];
-                      _mm256_storeu_si256((__m256i*)buffer, temp2);
-                      sum += buffer[0] + buffer[4];
-                  }
-                  for (; l < b_matrix->cols; ++l) {
-                      sum += a_matrix->data[(i + k) * a_matrix->cols + (j + l)] * flipped_b->data[k * b_matrix->cols + l];
-                  }
-              }
-              (*output_matrix)->data[i * output_cols + j] = sum;
-          }
-      }
-  } else {
-      for (int i = 0; i < output_rows; ++i) {
-          for (int j = 0; j < output_cols; ++j) {
-              int sum = 0;
-              for (int k = 0; k < b_matrix->rows; ++k) {
-                  for (int l = 0; l < b_matrix->cols; ++l) {
-                      sum += a_matrix->data[(i + k) * a_matrix->cols + (j + l)] * flipped_b->data[k * b_matrix->cols + l];
-                  }
-              }
-              (*output_matrix)->data[i * output_cols + j] = sum;
-          }
-      }
-  }
+  int a_cols = a_matrix->cols, b_cols = b_matrix->cols;
+  int *a_data = a_matrix->data, *flipped_data = flipped_b->data;
+  int *output_data = (*output_matrix)->data;
+
+    #pragma omp parallel for collapse(2)
+    for (int i = 0; i < output_rows; ++i) {
+        for (int j = 0; j < output_cols; ++j) {
+            int sum = 0;
+            if (b_cols >= 8) {
+                for (int k = 0; k < b_matrix->rows; ++k) {
+                    int l;
+                    for (l = 0; l <= b_cols - 8; l += 8) {
+                        __m256i a_vec = _mm256_loadu_si256((__m256i*)&a_data[(i + k) * a_cols + (j + l)]);
+                        __m256i b_vec = _mm256_loadu_si256((__m256i*)&flipped_data[k * b_cols + l]);
+                        __m256i product = _mm256_mullo_epi32(a_vec, b_vec);
+                        __m256i temp1 = _mm256_hadd_epi32(product, product);
+                        __m256i temp2 = _mm256_hadd_epi32(temp1, temp1);
+                        int buffer[8];
+                        _mm256_storeu_si256((__m256i*)buffer, temp2);
+                        sum += buffer[0] + buffer[4];
+                    }
+                    for (; l < b_cols; ++l) {
+                        sum += a_data[(i + k) * a_cols + (j + l)] * flipped_data[k * b_cols + l];
+                    }
+                }
+            } else {
+                for (int k = 0; k < b_matrix->rows; ++k) {
+                    for (int l = 0; l < b_cols; ++l) {
+                        sum += a_data[(i + k) * a_cols + (j + l)] * flipped_data[k * b_cols + l];
+                    }
+                }
+            }
+            output_data[i * output_cols + j] = sum;
+        }
+    }
   free(flipped_b->data);
   free(flipped_b);
   return 0;
